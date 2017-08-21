@@ -1,0 +1,471 @@
+```{r, echo = FALSE, cache = 0}
+Time = 33 # 33
+source('utils.R')
+
+# w_all is of the form: .(security_id, price, shares_outstanding, price_date, fund_id, Ca)
+w_all = fread("data_all.csv")
+
+w_all[, `:=`(Wia = price * as.numeric(holding), Ca = price * as.numeric(shares_outstanding))]
+w_all = w_all[price > 0 & Wia > 0 & Ca > 1E5,]
+
+w_all = w_all[, Wi := sum(Wia), by = 'fund_id,price_date']
+w_all = w_all[, Wa := sum(Wia), by = 'security_id,price_date']
+w_all = w_all[, `:=`(holding = NULL)]
+w_all = w_all[, ni := .N, by = .(fund_id, price_date)]
+w_all = w_all[, na := .N, by = .(security_id, price_date)]
+
+dates = sort(unique(w_all$price_date))
+setkey(w_all, price_date)
+dat = w_all[dates[Time]]
+dat = dat[, `:=`(price_date = NULL)]
+```
+
+```{r nb_ent_all, echo = FALSE}
+tmp = w_all[, .(security_id, fund_id, price_date)]
+tmp[, `:=`(Na = length(unique(security_id)), Ni = length(unique(fund_id))), by = price_date]
+tmp[, `:=`(security_id = NULL, fund_id = NULL)]
+setkey(tmp); tmp = unique(tmp)
+tmp = melt(tmp, id.vars = 'price_date')
+
+gnb = ggplot(tmp, aes(as.Date(price_date), value, color = variable)) +
+	my_theme +
+	theme(legend.position="top", legend.title = element_blank()) +
+	scale_color_discrete(labels=c(expression(paste('Number of securities, ', N[alpha], sep = '')), 
+								expression(paste('Number of funds, ', N[i], sep = '')))) +
+	scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+	geom_line(size = 1, linetype="dotted") +
+	labs(y = NULL, x = NULL)
+
+print(gnb)
+```
+
+```{r, echo = FALSE, cache = 0}
+# w_all is of the form: .(security_id, price, shares_outstanding, price_date, fund_id, Ca)
+w_all = fread("data_US.csv")
+
+w_all[, `:=`(Wia = price * as.numeric(holding), Ca = price * as.numeric(shares_outstanding))]
+w_all = w_all[price > 0 & Wia > 0 & Ca > 1E5,]
+
+w_all = w_all[, Wi := sum(Wia), by = 'fund_id,price_date']
+w_all = w_all[, Wa := sum(Wia), by = 'security_id,price_date']
+w_all = w_all[, `:=`(holding = NULL)]
+w_all = w_all[, ni := .N, by = .(fund_id, price_date)]
+w_all = w_all[, na := .N, by = .(security_id, price_date)]
+
+dates = sort(unique(w_all$price_date))
+setkey(w_all, price_date)
+dat = w_all[dates[Time]]
+dat = dat[, `:=`(price_date = NULL)]
+```
+
+```{r nb_ent_us, echo = FALSE}
+tmp = w_all[, .(security_id, fund_id, price_date)]
+tmp[, `:=`(Na = length(unique(security_id)), Ni = length(unique(fund_id))), by = price_date]
+tmp[, `:=`(security_id = NULL, fund_id = NULL)]
+setkey(tmp); tmp = unique(tmp)
+tmp = melt(tmp, id.vars = 'price_date')
+
+gnb + geom_line(data = tmp, aes(as.Date(price_date), value))
+```
+
+```{r wi_vs_ni, echo = FALSE}
+tmp = dat[, .(fund_id, ni = ni, Wi = Wi)]
+tmp = unique(tmp)
+setkey(tmp, ni)
+
+slopes = get_segmented(log10(tmp$ni), log10(tmp$Wi), psi = 45)
+
+mu1 = slopes$fit1
+mu2 = slopes$fit2
+mu1_ = mu1
+mu2_ = mu2
+threshold_ = 10**slopes$threshold
+
+h0 = ggplot(tmp, aes(ni, Wi)) +
+	my_theme +
+	theme(legend.position="top") +
+	theme(legend.title=element_blank()) +
+	geom_point(size = 1, alpha = 0.4) +
+	labs(x = expression(paste('Number of investments, ', n[i], sep = '')),
+	     y = expression(paste('Portfolio value, ', W[i], sep = ''))) +
+	scale_x_log10() +
+	scale_y_log10(limit= c(1E4, 2E11))
+
+h1 = h0 +
+	geom_smooth(method = 'loess', size = 1.2, se = FALSE, col = cbPalette[2], span = 0.8)
+
+g1_ = h1 + geom_abline(intercept = mu1_[1], slope = mu1_[2], col = cbPalette[6], lty = 2, size = 1.2) +
+	geom_abline(intercept = mu2_[1], slope = mu2_[2], col = cbPalette[6], lty = 2, size = 1.2) +
+	geom_smooth(method = 'loess', size = 1.2, se = FALSE, col = cbPalette[2], span = 0.8)
+
+print(h0)
+print(h1)
+print(g1_)
+```
+
+```{r wi_vs_ni_th, eval = TRUE, echo = FALSE}
+tt = dat[ni > threshold_, .(security_id, fund_id, Ca, ni)]
+tt = tt[order(-Ca)]
+tt[, rank := .GRP, by = Ca]
+tt[, rank := rank / max(rank)]
+div = seq(from = log10(min(tt$ni) - 0.1), to = log10(max(tt$ni)) + 0.2, by = 0.2) 
+tt[, nbin := cut(ni, breaks = 10 ** div)]
+tt[, x := (max(ni) + min(ni)) / 2, by = nbin]
+
+ggplot(tt, aes(x = rank, colour = nbin)) +
+	my_theme +
+	geom_density(aes(y = ..density..))+
+	theme(legend.text=element_text(size=10)) +
+	labs(colour = expression(n[i]), x = 'Rank',
+		 y = 'Density') +
+	stat_function(fun = dbeta)
+
+params = tt[rank < 1, list(.((fitdistr(rank, "beta", list(shape1 = 1.5, shape2 = 1.5))))), by = nbin]
+setkey(params, nbin)
+setkey(tt, nbin)
+
+params = merge(params, unique(tt[, .(x, nbin)]), all.x = TRUE)
+res = data.table(nbin = params$x,
+		   shape1 = params[, unlist(lapply(V1, function(x) x[[1]][1]))],
+			shape2 = params[, unlist(lapply(V1, function(x) x[[1]][2]))],
+			err1 = params[, unlist(lapply(V1, function(x) x$sd[1]))],
+			err2 = params[, unlist(lapply(V1, function(x) x$sd[2]))])
+resplot = rbind(res[, .(nbin, shape = shape1, err = err1, flag = 1)], res[, .(nbin, shape = shape2, err = err2, flag = 2)])
+coef1_ = coef(res[, rlm(shape1 ~ log10(nbin))])
+coef2_ = coef(res[, rlm(shape2 ~ log10(nbin))])
+
+ggplot(resplot, aes(x = nbin, shape, group = flag)) +
+	my_theme +
+	theme(legend.position="top", legend.title = element_blank()) +
+	geom_line(size = 1) +
+	geom_ribbon(aes(ymin = shape - err, ymax = shape + err), alpha = 0.3) +
+	geom_abline(intercept = coef1_[1], slope = coef1_[2], col = 4) +
+	geom_abline(intercept = coef2_[1], slope = coef2_[2], col = 4) +
+	labs(x = expression(paste('Number of investments, ', n[i], sep = '')),
+		 y = 'Shape') +
+	scale_x_log10()
+
+fund = dat[, .(fund_id, Wi, ni, Wia)]
+secu = dat[, .(security_id, Ca)]
+
+fund = unique(fund, by = 'fund_id')
+secu = unique(secu, by = 'security_id')
+fund[ni <= threshold_, Wopti := 10 ** mu1_[1] * ni ** mu1_[2]]
+secu = secu[order(-Ca)]; secu[, `:=`(rank = .I, prank = .I / max(.I))]
+
+fund = fund[order(-Wi)]
+fund[, rank := .I]
+fund[, shape1 := coef1_[2] * log10(ni) + coef1_[1]]
+fund[, shape2 := coef2_[2] * log10(ni) + coef2_[1]]
+
+fund[, nbin := cut(ni, breaks = 10 ** div)]
+dens = c('densx','densy')
+fund[, fmed := 10**-3.85*ni**-0.19]
+
+bfund = fund[, {
+	if (ni[1] <= threshold_) {
+		t1 = secu[, sample(rank, size = ni, prob = Ca, replace = FALSE)]
+		id = secu[t1][, .(rank = rank, Ca = Ca, Wia = Wopti / ni)]
+	} else {
+		t1 = secu[, sample(rank, size = ni, prob = dbeta(prank, shape1, shape2), replace = FALSE)]
+		id = secu[t1][, .(rank = rank, Ca = Ca, Wia = Ca * fmed)]
+	}
+	.(Wi = Wi, ni = ni, nia = list(id$rank), Wia = list(id$Wia))
+	},
+	by = fund_id]
+
+bfund[, With := sum(unlist(Wia)), by = fund_id]
+
+ggplot(bfund, aes(ni, With)) +
+	my_theme +
+	geom_point(size = 0.8, color = cbPalette[1]) +
+	geom_smooth(method = 'loess', size = 1.2, se = FALSE, col = cbPalette[2], span = 0.8) +
+	geom_abline(intercept = mu1_[1], slope = mu1_[2], col = 4, lty = 2, size = 1.1) +
+	geom_abline(intercept = mu2_[1], slope = mu2_[2], col = 4, lty = 2, size = 1.1) +
+	scale_x_log10() +
+	scale_y_log10(limits = c(NA, 5E11)) +
+	labs(x = 'Number of investments', y = 'Portfolio value')
+
+g1_ + geom_smooth(data = bfund, aes(ni, With), method = 'loess', size = 1.2, se = FALSE, col = cbPalette[4], span = 0.75, linetype='longdash') 
+
+tmp2 = bfund[ni > threshold_, .(fund_id, ni, nia)]
+tmp2 = tmp2[, .(nia = unlist(nia)), by = ni]
+tmp2[, rank := nia / max(nia)]
+div = seq(from = log10(min(tt$ni) - 0.1), to = log10(max(tt$ni)) + 0.2, by = 0.2) 
+tmp2[, nbin := cut(ni, breaks = 10 ** div)]
+
+ggplot(tmp2, aes(x = rank, colour = nbin)) +
+	my_theme +
+	geom_density(aes(y = ..density..))+
+	theme(legend.text=element_text(size=10)) +
+	labs(colour = expression(n[i]), x = 'Rank',
+		 y = 'Density') +
+	stat_function(fun = dbeta)
+```
+
+```{r ca_vs_na, echo = FALSE}
+dt_plot = unique(dat[, list(security_id, Ca, na)])
+
+slopes = get_segmented(log10(dt_plot$na), log10(dt_plot$Ca), psi = 80)
+fit2 = slopes$fit2
+g = ggplot(dt_plot, aes(na, Ca)) +
+	my_theme +
+	geom_point(size = 1, alpha = 0.4) +
+	labs(x = expression(paste('Number of investors, ', m[alpha], sep = '')),
+	   y = expression(paste('Market Capitalization, ', C[alpha]))) +
+	scale_x_log10() +
+	scale_y_log10(limit= c(1E7, 1E12))
+
+
+g1 = g +
+	stat_smooth(method = 'loess', size = 1, se = FALSE, col = cbPalette[2])
+
+
+g2_ = g +
+	geom_abline(intercept = fit2[1], slope = fit2[2], col = cbPalette[6], lty = 2, size = 1.2) +
+	stat_smooth(method = 'loess', size = 1, se = FALSE, col = cbPalette[2])
+
+print(g)
+print(g1)
+print(g2_)
+```
+
+```{r ca_vs_na_th, eval = TRUE, echo = FALSE}
+tmp = bfund[, table(c(unlist(nia), 1:nrow(secu)))]
+sec = secu[, na := as.vector(tmp) - 1][na >= 10]
+
+setkey(dat, fund_id)
+tmp = dat[, .(security_id, Ca, na)]
+dt_plot = unique(tmp)
+
+slopes = get_slopes(log10(dt_plot$na), log10(dt_plot$Ca))
+fit2 = slopes$fit2
+g = ggplot(dt_plot, aes(na, Ca)) +
+	my_theme +
+	geom_point(size = 1, alpha = 0.4) +
+	scale_x_log10() +
+	scale_y_log10()
+
+h3 = g + stat_smooth(method = 'loess', size = 1, se = FALSE, col = cbPalette[2]) +
+	geom_abline(intercept = coef(fit2)[1], slope = coef(fit2)[2], col = 4, lty = 2, size = 1.3) +
+	annotate('text', y = 1e10, x = 1000, label = paste("gamma==", round(coef(fit2)[2], 3)),parse = TRUE,
+			 color = 'red', size = 5)
+
+print(h3 + geom_point(data = sec, aes(na, Ca), size = 1, alpha = 0.4, col = cbPalette[4])
+	  + labs(x = expression(paste('Number of investors, ', m[alpha], sep = '')),
+			 y = expression(paste('Market Capitalization, ', C[alpha]))))
+
+g2_ + geom_smooth(data = sec, aes(na, Ca), method = 'loess', size = 1.2, se = FALSE, col = cbPalette[4], span = 0.75, linetype='longdash') 
+```
+
+```{r ca_vs_na_separate, eval = TRUE, echo = FALSE}
+tt = dat[, list(security_id, fund_id, Ca, ni, Wia)]
+sec1 = tt[ni <= threshold_, .(security_id, Ca, Wia)][, `:=`(na = .N, Wa = sum(Wia)), by = security_id][, `:=`(type = 1, Wia = NULL)]
+sec2 = tt[ni > threshold_, .(security_id, Ca, Wia)][, `:=`(na = .N, Wa = sum(Wia)), by = security_id][, `:=`(type = 2, Wia = NULL)]
+sec1 = unique(sec1, by='security_id')
+sec2 = unique(sec2, by='security_id')
+sec = rbind(sec1, sec2)
+
+tmp1 = bfund[ni <= threshold_, table(c(unlist(nia), 1:nrow(secu)))]
+sec1 = copy(secu)
+sec1 = sec1[, na := as.vector(tmp1) - 1][, type := 3][, .(security_id, Ca, na, type)]
+
+tmp = mapply(cbind, bfund[ni <= threshold_]$nia, bfund[ni <= threshold_]$Wia, SIMPLIFY=FALSE)
+sec1[, Wa := 0]
+for (x in tmp) {
+	sec1$Wa[x[,1]] = sec1$Wa[x[,1]] + x[,2]
+}
+sec1 = sec1[na > 0]
+
+tmp2 = bfund[ni > threshold_, table(c(unlist(nia), 1:nrow(secu)))]
+sec2 = copy(secu)
+sec2 = sec2[, na := as.vector(tmp2) - 1][, type := 4][, .(security_id, Ca, na, type)]
+
+tmp = mapply(cbind, bfund[ni > threshold_]$nia, bfund[ni > threshold_]$Wia, SIMPLIFY=FALSE)
+sec2[, Wa := 0]
+for (x in tmp) {
+	sec2$Wa[x[,1]] = sec2$Wa[x[,1]] + x[,2]
+}
+sec2 = sec2[na > 0]
+sec = rbind(sec, sec1, sec2)
+sec[, type := as.factor(type)]
+
+ggplot(sec, aes(na, Ca, color = type)) +
+	my_theme +
+	theme(legend.position="top", legend.direction = "horizontal") +
+	scale_colour_manual(name="",
+						values = c("1"=cbPalette[6], "2"=cbPalette[4], "3"=cbPalette[8], "4"=cbPalette[2]),
+						labels = c('Low Emp.','High Emp.','Low Model', 'High Model')) +
+	geom_point(size = 1, alpha = 1) +
+	labs(x = expression(paste('Number of investors, ', m[alpha], sep = '')),
+			 y = expression(paste('Market Capitalization, ', C[alpha]))) +
+	scale_x_log10() +
+	scale_y_log10()
+
+ggplot(sec, aes(na, Ca, color = type)) +
+	my_theme +
+	theme(legend.position="top", legend.direction = "horizontal") +
+	scale_colour_manual(name="",
+						values = c("1"=cbPalette[6], "2"=cbPalette[4], "3"=cbPalette[8], "4"=cbPalette[2]),
+						labels = c('Low Emp.','High Emp.','Low Model', 'High Model')) +
+	stat_smooth(method = 'loess', size = 1, se = FALSE) +
+	labs(x = expression(paste('Number of investors, ', m[alpha], sep = '')),
+			 y = expression(paste('Market Capitalization, ', C[alpha]))) +
+	scale_x_log10() +
+	scale_y_log10()
+
+ggplot(sec, aes(na, Wa, color = type)) +
+	my_theme +
+	geom_point(size = 1, alpha = 1) +
+	scale_x_log10() +
+	scale_y_log10()
+```
+
+```{r, ca_vs_na_time}
+setkey(w_all, price_date)
+dates = unique(w_all$price_date)
+ga = c(rep(NA, length(dates)))
+err = ga;
+for (i in seq_along(dates)) {
+	tmp = unique(w_all[J(dates[i])][ni >= 10, list(security_id, Ca, na)])
+	slopes = get_segmented(log10(tmp$na), log10(tmp$Ca), 80)
+
+	ga[i] = slopes$fit2[2]
+	err[i] = slopes$err2
+}
+allres = data.frame(dates = dates, ga = ga, err = err)
+allres1 = melt(allres[c(names(allres)[-grep('err', names(allres))])])
+allres2 = melt(allres[c(names(allres)[-grep('ga', names(allres))])])
+setnames(allres2, 'value', 'err')
+allres = cbind(allres1, allres2[c('variable', 'err')])
+
+gtime = ggplot(allres, aes(as.Date(dates), value, color = variable)) +
+	my_theme +
+	theme(legend.position="top", legend.title = element_blank(), legend.direction = "horizontal") +
+	geom_line(size = 1) +
+	geom_ribbon(aes(ymin = value - err, ymax = value + err), alpha = 0.1) +
+	scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+	ylim(0, 2.6) +
+	labs(x = NULL, y = NULL)
+
+print(gtime)
+```
+
+```{r wi_vs_ni_time, echo = FALSE}
+setkey(w_all, price_date)
+mu1 = mu2 = err1 = err2 = threshold = c(rep(NA, length(dates)))
+for (i in seq_along(dates)) {
+	tmp = w_all[J(dates[i])][ni >= 5, list(eval(fid), Wi, ni)]
+	tmp = unique(tmp);
+	slopes = get_segmented(log10(tmp$ni), log10(tmp$Wi), 45)
+	threshold[i] = 10**slopes$threshold
+	mu1[i] = slopes$fit1[2]
+	err1[i] = slopes$err1
+	mu2[i] = slopes$fit2[2]
+	err2[i] = slopes$err2
+}
+
+allres = data.frame(dates = dates, mu1 = mu1, err1 = err1, mu2 = mu2, err2 = err2)
+allres1 = melt(allres[c(names(allres)[-grep('err', names(allres))])])
+allres2 = melt(allres[c(names(allres)[-grep('mu', names(allres))])])
+setnames(allres2, 'value', 'err')
+allres = cbind(allres1, allres2[c('variable', 'err')])
+
+ggplot(allres, aes(as.Date(dates), value, colour = variable)) +
+	my_theme +
+	theme(legend.position="top", legend.title = element_blank(), legend.direction = "horizontal") +
+	geom_line(size = 1) +
+	geom_abline(intercept = 2.1, slope = 0) +
+	geom_abline(intercept = 0.3, slope = 0) +
+	geom_ribbon(aes(ymin = value - err, ymax = value + err), alpha = 0.1) +
+	scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+	scale_color_discrete(labels=c(expression(mu['<']), expression(mu['>']))) +
+	labs(x = NULL, y = NULL) 
+
+gtime +
+	geom_line(data=allres, aes(as.Date(dates), value, colour = variable)) +
+	geom_ribbon(data=allres, aes(ymin = value - err, ymax = value + err), alpha = 0.1) +
+	geom_abline(intercept = 2.1, slope = 0) +
+	geom_abline(intercept = 0.3, slope = 0) +
+	scale_color_discrete(labels=c(expression(gamma), expression(mu['<']), expression(mu['>'])))
+
+allres = data.frame(dates = dates, threshold = threshold)
+ggplot(allres, aes(as.Date(dates), threshold)) +
+	my_theme +
+	geom_line(col = cbPalette[3]) +
+	scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+	ylim(0, 70) +
+	labs(x = NULL, y = "Threshold") 
+```
+
+```{r entropy_vs_n_th, echo = FALSE }
+dates = sort(unique(w_all$price_date))
+setkey(w_all, price_date)
+tt = w_all[dates[c(Time, Time-1)], .(fund_id, security_id, price, price_date)]
+tt = tt[, if (.N ==2) .SD, by=.(fund_id,security_id)]
+setkey(tt, fund_id, security_id, price_date)
+tt = na.omit(tt[, .(r = log(price / shift(price))), by = .(fund_id,security_id)])
+keep = tt[, .(fund_id, security_id)]
+tt[, fund_id := NULL]
+tt = unique(tt)
+Sigma = sd(tt$r) # Sigma is computed for the positions kept only
+
+# All
+ttall = dat[ni > 1, .(fund_id, Wi, Wia, ni)]
+ttall[, Wi := sum(Wia), by = fund_id]
+ttall[, S := sum(Wia / Wi * log(Wia / Wi)), by = fund_id]
+ttall = unique(ttall, by = 'fund_id')
+
+# Restrict
+setkeyv(dat, c('fund_id','security_id'))
+tt_ = dat[keep, .(fund_id, security_id, Wi, Wia, ni)]
+tt_[, ni_rest := .N, by = fund_id]
+tt_ = tt_[ni_rest > 1]
+tt_[, Wi := sum(Wia), by = fund_id]
+tt_[, S_rest := sum(Wia / Wi * log(Wia / Wi)), by = fund_id]
+
+for (i in 1:20) {
+	tt = copy(tt_)
+	tt[, r := exp(rnorm(1, mean = 0, Sigma)), by = security_id]
+	tt[, security_id := NULL]
+
+	tt[, Wia_thr := (Wi / ni_rest) * r]
+	tt[, Wi_thr := sum(Wia_thr), by = fund_id]
+	tt[, S_thr := sum(Wia_thr / Wi_thr * log(Wia_thr / Wi_thr)), by = fund_id]
+
+	tt[, Wia_th := (Wi / ni) * r]
+	tt[, Wi_th := sum(Wia_th), by = fund_id]
+	tt[, S_th := sum(Wia_th / Wi_th * log(Wia_th / Wi_th)), by = fund_id]
+
+	tt = unique(tt, by = 'fund_id')
+	if (i == 1) {
+		res1 = matrix(tt$S_thr, ncol = 1)
+		res2 = matrix(tt$S_th, ncol = 1)
+	} else {
+		res1 = cbind(res1, tt$S_thr)
+		res2 = cbind(res2, tt$S_th)
+	}
+}
+tt[, S_thr := rowMeans(res1)]
+tt[, S_th := rowMeans(res2)]
+tt = na.omit(tt)
+
+tt[, c('Wi','Wia','ni') := NULL]
+setkey(tt,fund_id)
+setkey(ttall,fund_id)
+res = tt[ttall]
+
+res[, c('S','S_rest','S_th') := .(- S / log(ni), - S_rest / log(ni_rest) * S_th / log(ni) / (S_thr / log(ni_rest)), - S_th / log(ni_rest) * S_th / log(ni) / (S_thr / log(ni_rest)))]
+
+# Rescaling of S
+ggplot(res, aes(ni, S)) +
+	my_theme +
+	theme(legend.position="none", legend.title = element_blank()) +
+	geom_point(alpha = 0.1) +
+	geom_smooth(aes(ni,S), method = 'loess', size = 1.2, se = FALSE, col = cbPalette[3], span = 0.75) +
+	geom_smooth(aes(ni_rest,S_rest), method = 'loess', size = 1.2, se = FALSE, col = cbPalette[3], span = 0.75, linetype='longdash') +
+	geom_smooth(aes(ni_rest,S_th), method = 'loess', size = 1.2, se = FALSE, col = cbPalette[7], span = 0.75) +
+	labs(x = expression(paste('Number of investments, ', n[i], sep = '')), y = "Scaled Entropy, S.I.") +
+	scale_colour_manual(values=c("red","green")) +
+	scale_x_log10()
+```
