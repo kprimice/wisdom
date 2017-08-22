@@ -1,5 +1,12 @@
+---
+title:  'Wisdom of the institutional crowd'
+author:
+- Kevin Primicerio, Damien Challet and Stanislao Gualdi
+date: "`r format(Sys.time(), '%d %B %Y')`"
+---
+
 ```{r, echo = FALSE, cache = 0}
-Time = 33 # 33
+Time = 33
 source('utils.R')
 
 # w_all is of the form: .(security_id, price, shares_outstanding, price_date, fund_id, Ca)
@@ -20,6 +27,7 @@ dat = w_all[dates[Time]]
 dat = dat[, `:=`(price_date = NULL)]
 ```
 
+$N_i vs Time$ and $N_{\alpha} vs Time$
 ```{r nb_ent_all, echo = FALSE}
 tmp = w_all[, .(security_id, fund_id, price_date)]
 tmp[, `:=`(Na = length(unique(security_id)), Ni = length(unique(fund_id))), by = price_date]
@@ -68,6 +76,7 @@ tmp = melt(tmp, id.vars = 'price_date')
 gnb + geom_line(data = tmp, aes(as.Date(price_date), value))
 ```
 
+$W_i vs n_i$, empirical
 ```{r wi_vs_ni, echo = FALSE}
 tmp = dat[, .(fund_id, ni = ni, Wi = Wi)]
 tmp = unique(tmp)
@@ -103,6 +112,7 @@ print(h1)
 print(g1_)
 ```
 
+$W_i vs n_i$, simulation
 ```{r wi_vs_ni_th, eval = TRUE, echo = FALSE}
 tt = dat[ni > threshold_, .(security_id, fund_id, Ca, ni)]
 tt = tt[order(-Ca)]
@@ -203,6 +213,7 @@ ggplot(tmp2, aes(x = rank, colour = nbin)) +
 	stat_function(fun = dbeta)
 ```
 
+$C_{\alpha} vs n_{\alpha}$, empirical
 ```{r ca_vs_na, echo = FALSE}
 dt_plot = unique(dat[, list(security_id, Ca, na)])
 
@@ -230,6 +241,7 @@ print(g1)
 print(g2_)
 ```
 
+$C_{\alpha} vs n_{\alpha}$, simulation
 ```{r ca_vs_na_th, eval = TRUE, echo = FALSE}
 tmp = bfund[, table(c(unlist(nia), 1:nrow(secu)))]
 sec = secu[, na := as.vector(tmp) - 1][na >= 10]
@@ -258,6 +270,7 @@ print(h3 + geom_point(data = sec, aes(na, Ca), size = 1, alpha = 0.4, col = cbPa
 g2_ + geom_smooth(data = sec, aes(na, Ca), method = 'loess', size = 1.2, se = FALSE, col = cbPalette[4], span = 0.75, linetype='longdash') 
 ```
 
+$C_{\alpha}$ vs $n_{\alpha}$, for US and non-US securities
 ```{r ca_vs_na_separate, eval = TRUE, echo = FALSE}
 tt = dat[, list(security_id, fund_id, Ca, ni, Wia)]
 sec1 = tt[ni <= threshold_, .(security_id, Ca, Wia)][, `:=`(na = .N, Wa = sum(Wia)), by = security_id][, `:=`(type = 1, Wia = NULL)]
@@ -321,6 +334,7 @@ ggplot(sec, aes(na, Wa, color = type)) +
 	scale_y_log10()
 ```
 
+$C_{\alpha}$ vs $n_{\alpha}(t)$
 ```{r, ca_vs_na_time}
 setkey(w_all, price_date)
 dates = unique(w_all$price_date)
@@ -351,6 +365,7 @@ gtime = ggplot(allres, aes(as.Date(dates), value, color = variable)) +
 print(gtime)
 ```
 
+$W_i$ vs $n_i(t)$
 ```{r wi_vs_ni_time, echo = FALSE}
 setkey(w_all, price_date)
 mu1 = mu2 = err1 = err2 = threshold = c(rep(NA, length(dates)))
@@ -398,6 +413,7 @@ ggplot(allres, aes(as.Date(dates), threshold)) +
 	labs(x = NULL, y = "Threshold") 
 ```
 
+$S$ vs $n_i$
 ```{r entropy_vs_n_th, echo = FALSE }
 dates = sort(unique(w_all$price_date))
 setkey(w_all, price_date)
